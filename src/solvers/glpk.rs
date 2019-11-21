@@ -1,15 +1,13 @@
 extern crate uuid;
 use self::uuid::Uuid;
 
-use std::fs;
 use std::collections::HashMap;
-use std::fs::File;
-use std::io::{Error, BufReader, BufRead};
-use std::process::Command;
+use std::io::{BufRead, BufReader, Error, Write};
+use std::process::{Command, Stdio};
 
 use dsl::LpProblem;
 use format::lp_format::*;
-use solvers::{Status, SolverTrait, SolverWithSolutionParsing, Solution};
+use solvers::{Solution, SolverTrait, SolverWithSolutionParsing, Status};
 
 pub struct GlpkSolver {
     name: String,
@@ -42,7 +40,11 @@ impl GlpkSolver {
 }
 
 impl SolverWithSolutionParsing for GlpkSolver {
-    fn read_specific_solution<'a>(&self, f: &File, problem: Option<&'a LpProblem>) -> Result<Solution<'a>, String> {
+    fn read_specific_solution<'a, R: BufRead>(
+        &self,
+        file: R,
+        problem: Option<&'a LpProblem>,
+    ) -> Result<Solution<'a>, String> {
         fn read_size(line: Option<Result<String, Error>>) -> Result<usize, String> {
             match line {
                 Some(Ok(l)) => match l.split_whitespace().nth(1) {
@@ -56,8 +58,6 @@ impl SolverWithSolutionParsing for GlpkSolver {
             }
         }
         let mut vars_value: HashMap<_, _> = HashMap::new();
-
-        let file = BufReader::new(f);
 
         let mut iter = file.lines();
         let row = match read_size(iter.nth(1)) {
@@ -74,9 +74,7 @@ impl SolverWithSolutionParsing for GlpkSolver {
                 "INFEASIBLE (FINAL)" | "INTEGER EMPTY" => Status::Infeasible,
                 "UNDEFINED" => Status::NotSolved,
                 "INTEGER UNDEFINED" | "UNBOUNDED" => Status::Unbounded,
-                _ => {
-                    return Err("Incorrect solution format: Unknown solution status".to_string())
-                }
+                _ => return Err("Incorrect solution format: Unknown solution status".to_string()),
             },
             _ => return Err("Incorrect solution format: No solution status found".to_string()),
         };
@@ -85,9 +83,7 @@ impl SolverWithSolutionParsing for GlpkSolver {
             let line = match result_lines.next() {
                 Some(Ok(l)) => l,
                 _ => {
-                    return Err(
-                        "Incorrect solution format: Not all columns are present".to_string()
-                    )
+                    return Err("Incorrect solution format: Not all columns are present".to_string())
                 }
             };
             let result_line: Vec<_> = line.split_whitespace().collect();
@@ -100,15 +96,14 @@ impl SolverWithSolutionParsing for GlpkSolver {
                 }
             } else {
                 return Err(
-                    "Incorrect solution format: Column specification has to few fields"
-                        .to_string(),
+                    "Incorrect solution format: Column specification has to few fields".to_string(),
                 );
             }
         }
         if let Some(p) = problem {
-            Ok( Solution::with_problem(status, vars_value, p) )
+            Ok(Solution::with_problem(status, vars_value, p))
         } else {
-            Ok( Solution::new(status, vars_value) )
+            Ok(Solution::new(status, vars_value))
         }
     }
 }
@@ -116,31 +111,40 @@ impl SolverWithSolutionParsing for GlpkSolver {
 impl SolverTrait for GlpkSolver {
     type P = LpProblem;
     fn run<'a>(&self, problem: &'a Self::P) -> Result<Solution<'a>, String> {
-        let file_model = &format!("{}.lp", problem.unique_name);
+        // let file_model = &format!("{}.lp", problem.unique_name);
 
-        match problem.write_lp(file_model) {
-            Ok(_) => {
-                let result = match Command::new(&self.command_name)
-                    .arg("--lp")
-                    .arg(file_model)
-                    .arg("-o")
-                    .arg(&self.temp_solution_file)
-                    .output()
-                    {
-                        Ok(r) => {
-                            if r.status.success() {
-                                self.read_solution(&self.temp_solution_file, Some(problem))
-                            } else {
-                                Err(r.status.to_string())
-                            }
-                        }
-                        Err(_) => Err(format!("Error running the {} solver", self.name)),
-                    };
-                let _ = fs::remove_file(&file_model);
+        let mut output = Command::new(&self.command_name)
+            .arg("--lp")
+            .arg("/dev/stdin")
+            .arg("-o")
+            .arg("/dev/stderr")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("could not spawn glpsol");
 
-                result
-            }
-            Err(e) => Err(e.to_string()),
+        let stdin = output
+            .stdin
+            .as_mut()
+            .expect("could not obtain stdin of glpsol");
+
+        stdin
+            .write_all(problem.to_lp_file_format().as_bytes())
+            .expect("could not write to stdin");
+
+        let result = output.wait().expect("could not wait for glpsol");
+
+        let stderr = output
+            .stderr
+            .as_mut()
+            .expect("could not get stderr of glpsol");
+
+        if result.success() {
+            let reader = BufReader::new(stderr);
+            self.read_specific_solution(reader, Some(problem))
+        } else {
+            Err(self.name.clone())
         }
     }
 }

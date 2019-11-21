@@ -1,15 +1,16 @@
 extern crate uuid;
 use self::uuid::Uuid;
 
-use std::fs;
 use std::collections::HashMap;
-use std::fs::File;
-use std::io::{BufReader, BufRead};
+use std::fs;
+use std::io::BufRead;
 use std::process::Command;
 
 use dsl::LpProblem;
 use format::lp_format::*;
-use solvers::{Status, SolverTrait, WithMaxSeconds, WithNbThreads, SolverWithSolutionParsing, Solution};
+use solvers::{
+    Solution, SolverTrait, SolverWithSolutionParsing, Status, WithMaxSeconds, WithNbThreads,
+};
 
 #[derive(Debug, Clone)]
 pub struct CbcSolver {
@@ -53,7 +54,11 @@ impl CbcSolver {
 }
 
 impl SolverWithSolutionParsing for CbcSolver {
-    fn read_specific_solution<'a>(&self, f: &File, problem: Option<&'a LpProblem>) -> Result<Solution<'a>, String> {
+    fn read_specific_solution<'a, R: BufRead>(
+        &self,
+        mut file: R,
+        problem: Option<&'a LpProblem>,
+    ) -> Result<Solution<'a>, String> {
         let mut vars_value: HashMap<_, _> = HashMap::new();
 
         // populate default values for all vars
@@ -65,7 +70,6 @@ impl SolverWithSolutionParsing for CbcSolver {
             }
         }
 
-        let mut file = BufReader::new(f);
         let mut buffer = String::new();
         let _ = file.read_line(&mut buffer);
 
@@ -100,9 +104,9 @@ impl SolverWithSolutionParsing for CbcSolver {
             }
         }
         if let Some(p) = problem {
-            Ok( Solution::with_problem(status, vars_value, p) )
+            Ok(Solution::with_problem(status, vars_value, p))
         } else {
-            Ok( Solution::new(status, vars_value) )
+            Ok(Solution::new(status, vars_value))
         }
     }
 }
@@ -139,13 +143,14 @@ impl SolverTrait for CbcSolver {
 
         let mut params: HashMap<String, String> = Default::default();
         let optional_params: Vec<Option<(String, u32)>> = vec![
-            self.max_seconds().map(|s| ("seconds".to_owned(), s )),
-            self.nb_threads().map(|t| ("threads".to_owned(), t)) ];
+            self.max_seconds().map(|s| ("seconds".to_owned(), s)),
+            self.nb_threads().map(|t| ("threads".to_owned(), t)),
+        ];
 
         for (arg, value) in optional_params.iter().flatten() {
             params.insert(arg.to_string(), value.to_string());
         }
-        params.iter().for_each( |(a,b)| println!("{},{}",a,b));
+        params.iter().for_each(|(a, b)| println!("{},{}", a, b));
 
         let result = Command::new(&self.command_name)
             .arg(&file_model)
