@@ -2,28 +2,26 @@ use std::fs::File;
 use std::io::prelude::*;
 use std::io::Result;
 
-use dsl::*;
 use dsl::Constraint::*;
 use dsl::LpExpression::*;
+use dsl::*;
 
 pub trait LpFileFormat {
     fn to_lp_file_format(&self) -> String;
     fn write_lp(&self, file_model: &str) -> Result<()> {
         let mut buffer = File::create(file_model)?;
-        buffer.write(self.to_lp_file_format().as_bytes())?;
+        buffer.write_all(self.to_lp_file_format().as_bytes())?;
         Ok(())
     }
 }
 
 impl LpFileFormat for LpProblem {
-
     fn to_lp_file_format(&self) -> String {
-
         let mut buffer = String::new();
 
         buffer.push_str(format!("\\ {}\n\n", &self.name).as_str());
 
-        buffer.push_str( &objective_lp_file_block(self) );
+        buffer.push_str(&objective_lp_file_block(self));
 
         let constraints_block = constraints_lp_file_block(self);
         if constraints_block.len() > 0 {
@@ -55,11 +53,11 @@ fn objective_lp_file_block(prob: &LpProblem) -> String {
     // Write objectives
     let obj_type = match prob.objective_type {
         LpObjective::Maximize => "Maximize\n  ",
-        LpObjective::Minimize => "Minimize\n  "
+        LpObjective::Minimize => "Minimize\n  ",
     };
     match prob.obj_expr {
         Some(ref expr) => format!("{}obj: {}", obj_type, expr.to_lp_file_format()),
-        _ => String::new()
+        _ => String::new(),
     }
 }
 fn constraints_lp_file_block(prob: &LpProblem) -> String {
@@ -67,7 +65,11 @@ fn constraints_lp_file_block(prob: &LpProblem) -> String {
     let mut constraints = prob.constraints.iter();
     let mut index = 1;
     while let Some(ref constraint) = constraints.next() {
-        res.push_str(&format!("  c{}: {}\n", index.to_string(), &constraint.to_lp_file_format()));
+        res.push_str(&format!(
+            "  c{}: {}\n",
+            index.to_string(),
+            &constraint.to_lp_file_format()
+        ));
         index += 1;
     }
     res
@@ -78,15 +80,15 @@ fn bounds_lp_file_block(prob: &LpProblem) -> String {
     for (_, v) in prob.variables() {
         match v {
             &ConsInt(LpInteger {
-                         ref name,
-                         lower_bound,
-                         upper_bound,
-                     })
+                ref name,
+                lower_bound,
+                upper_bound,
+            })
             | &ConsCont(LpContinuous {
-                            ref name,
-                            lower_bound,
-                            upper_bound,
-                        }) => {
+                ref name,
+                lower_bound,
+                upper_bound,
+            }) => {
                 if let Some(l) = lower_bound {
                     res.push_str(&format!("  {} <= {}", &l.to_string(), &name));
                     if let Some(u) = upper_bound {
@@ -123,7 +125,7 @@ fn integers_lp_file_block(prob: &LpProblem) -> String {
     res
 }
 
-fn binaries_lp_file_block(prob: &LpProblem) -> String  {
+fn binaries_lp_file_block(prob: &LpProblem) -> String {
     let mut res = String::new();
     for (_, v) in prob.variables() {
         match v {
@@ -180,6 +182,7 @@ fn show(e: &LpExpression, with_parenthesis: bool) -> String {
             let ref deref_e1 = **e1;
 
             match deref_e1 {
+                #[allow(clippy::float_cmp)]
                 &LitVal(v) if v == 1.0 => {
                     //e2.to_lp_file_format()
                     str_left_mult.to_string()
@@ -187,6 +190,7 @@ fn show(e: &LpExpression, with_parenthesis: bool) -> String {
                         + &show(e2, with_parenthesis)
                         + str_right_mult
                 }
+                #[allow(clippy::float_cmp)]
                 &LitVal(v) if v == -1.0 => {
                     //"-".to_string() + &e2.to_lp_file_format()
                     str_left_mult.to_string()
